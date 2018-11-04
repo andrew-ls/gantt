@@ -1,0 +1,428 @@
+#!/bin/sh
+
+# gantt
+# Copyright (C) 2018, Andrew Steel
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 3
+# as published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+THIS_AUTHORS="Andrew Steel"
+THIS_COMMAND="$(basename "${0}")"
+THIS_COPYRIGHT_YEAR="2018"
+THIS_COPYRIGHT_OWNER="Andrew Steel <dev@andrewsteel.net>"
+THIS_LICENSE="GPLv3 (GNU GPL version 3) <https://gnu.org/licenses/gpl.html>."
+THIS_LICENSE_NOTICE="This is free software: you are free to change and redistribute it.\\nThere is NO WARRANTY, to the extent permitted by law."
+THIS_NAME="gantt"
+THIS_VERSION="0.0.0"
+
+DEFAULT_GANTT_CHART_CHARACTER_MAX="▒"
+DEFAULT_GANTT_CHART_CHARACTER_MIN="█"
+DEFAULT_GANTT_CHART_CHARACTER_TIMELINE="•"
+
+process_args () {
+
+	unset -v ARGS_HELP          # Whether to show help.
+	unset -v ARGS_HELP_EXAMPLE  # Whether to show the example input help.
+	unset -v ARGS_HOURS_PER_DAY # How many hours of work per day.
+	unset -v ARGS_INPUT         # Tasks input.
+	unset -v ARGS_TASKS         # Number / range of tasks to include.
+	unset -v ARGS_VERSION       # Whether to show version information.
+
+	# Pay attention to how exit statuses are used - we need them to know how
+	#  many spots to shift the arguments after acquiring a value.
+
+	get_key () {(
+		printf "%s" "$(
+			printf "%s" "${1:?}" \
+			| cut -d '=' -f '1'
+		)"
+	)}
+	get_value () {(
+		VALUE="$(
+			printf "%s" "${1:?}" \
+			| cut -s -d '=' -f '2-'
+		)"
+		if test "${VALUE}"; then
+			printf "%s" "${VALUE}"
+			exit 0
+		else
+			printf "%s" "${2}"
+			exit 1
+		fi
+	)}
+	process_args_hours_per_day () {(
+		printf "%s" "${1:?}" \
+		| grep -e '[[:digit:]]'
+		exit "${2:-0}"
+	)}
+	process_args_tasks () {(
+		printf "%s" "${1:?}"
+		exit "${2:-0}"
+	)}
+
+	while test -n "${1}"; do
+		if test "${1%"${1#??}"}" = "--"; then
+			ARGUMENT="${1#??}"
+			KEY="$(get_key "${ARGUMENT}")"
+			case "${KEY}" in
+				("help") ARGS_HELP="true" ;;
+				("help-example") ARGS_HELP_EXAMPLE="true" ;;
+				("hours-per-day") ARGS_HOURS_PER_DAY="$(process_args_hours_per_day "$(get_value "${ARGUMENT}" "${2}")" "${?}")"; shift "${?}" ;;
+				("tasks") ARGS_TASKS="$(process_args_tasks "$(get_value "${ARGUMENT}" "${2}")" "${?}")"; shift "${?}" ;;
+				("version") ARGS_VERSION="true" ;;
+				("") shift; break ;;
+			esac
+		elif test "${1%"${1#?}"}" = "-"; then
+			ARGUMENT="${1#?}"
+			KEY="$(get_key "${ARGUMENT}")"
+			for CHAR in $(
+				printf "%s" "${KEY}" \
+				| cut -d '=' -f '1' \
+				| fold -w 1
+			); do
+				VALUE="$(
+					printf "%s" "${1#?}" \
+					| cut -d '=' -f '2-'
+				)"
+				case "${CHAR}" in
+					("h") ARGS_HOURS_PER_DAY="$(process_args_hours_per_day "$(get_value "${ARGUMENT}" "${2}")" "${?}")"; shift "${?}" ;;
+					("t") ARGS_TASKS="$(process_args_tasks "$(get_value "${ARGUMENT}" "${2}")" "${?}")"; shift "${?}" ;;
+				esac
+			done
+		else
+			break
+		fi
+		shift
+	done
+	test -f "${1}" && ARGS_INPUT="$(cat "${1}")"
+
+	# Defaults
+	test "${ARGS_HOURS_PER_DAY}" || ARGS_HOURS_PER_DAY="8"
+
+}
+process_args "${@}"
+
+help () {(
+	printf "%b\\n" \
+		"Usage: ${THIS_COMMAND} [OPTION]... [FILE]..." \
+		"Prints a gantt chart from a specially formatted 'agenda' input." \
+		"" \
+		"File should be in the form..." \
+		"\\tTASK:" \
+		"\\tSUBTASK: (status|<INT>[-<INT>])" \
+		"" \
+		"With no FILE, standard input is read." \
+		"" \
+		"\\t-h, --hours-per-day=NUM\\tHours of work per day." \
+		"\\t-t, --tasks=LIST      \\tComma-separated list of tasks to include. Tasks are" \
+		"\\t                      \\t\\treferenced by index in the order they appear." \
+		"\\t    --help            \\tPrint this help." \
+		"\\t    --help-example    \\tPrint an input example." \
+		"\\t    --version         \\tPrint version information." \
+		"" \
+		"Display can be customized with the following environment variables:" \
+		"\\tGANTT_CHART_CHARACTER_MAX (Default: ${DEFAULT_GANTT_CHART_CHARACTER_MAX})" \
+		"\\t\\t- Character to use for 'maximum estimate' portion of bars." \
+		"\\tGANTT_CHART_CHARACTER_MIN (Default: ${DEFAULT_GANTT_CHART_CHARACTER_MIN})" \
+		"\\t\\t- Character to use for 'minumum estimate' portion of bars." \
+		"\\tGANTT_CHART_CHARACTER_TIMELINE (Default: ${DEFAULT_GANTT_CHART_CHARACTER_TIMELINE})" \
+		"\\t\\t- Character to use for the timeline decoration." \
+		"" \
+		"Piping to a pager is recommended if output exceeds your terminal width." \
+	| sed -e 's/\t/  /g'
+)}
+test "${ARGS_HELP}" && help && exit
+
+help_example () {(
+	printf "%b\\n" \
+		"# This is an example of the input \`${THIS_COMMAND}\` expects." \
+		"# Lines starting with a '#' are ignored." \
+		"# Whitespace padding is also ignored." \
+		"# Hint: try piping this output back into \`${THIS_COMMAND}\` to see the visual output." \
+		"Testing:" \
+		"\\tTest Live View: 4" \
+		"Attendance Blocks Tab:" \
+		"\\tDesign UX: 1-6" \
+		"\\tImplement Listings: blocked" \
+		"\\tImplement Details: 20-24" \
+		"Directory-Attendance Integration:" \
+		"\\tDesign UX: done" \
+		"\\tImplement Viewing: 8-24" \
+	| sed -e 's/\t/  /g'
+)}
+test "${ARGS_HELP_EXAMPLE}" && help_example && exit
+
+version () {(
+	printf "%b\\n" \
+		"${THIS_NAME} ${THIS_VERSION}" \
+		"Copyright (C) ${THIS_COPYRIGHT_YEAR} ${THIS_COPYRIGHT_OWNER}" \
+		"License: ${THIS_LICENSE}" \
+		"$(printf "%b\\n" "${THIS_LICENSE_NOTICE}")" \
+		"" \
+		"Authors:" \
+		"$(printf "\\t\\t%b\\n" "${THIS_AUTHORS}")" \
+	| sed -e 's/\t/  /g'
+)}
+test "${ARGS_VERSION}" && version && exit
+
+test -z "${ARGS_INPUT}" && ARGS_INPUT="$(cat -)"
+
+main () {(
+
+	GANTT_CHART_CHARACTER_MAX="${GANTT_CHART_CHARACTER_MAX:-${DEFAULT_GANTT_CHART_CHARACTER_MAX}}"
+	GANTT_CHART_CHARACTER_MIN="${GANTT_CHART_CHARACTER_MIN:-${DEFAULT_GANTT_CHART_CHARACTER_MIN}}"
+	GANTT_CHART_CHARACTER_TIMELINE="${GANTT_CHART_CHARACTER_TIMELINE:-${DEFAULT_GANTT_CHART_CHARACTER_TIMELINE}}"
+	REGEX_TASK='^[^:]*[[:alnum:]][^:]*:$'
+	REGEX_SUBTASK='^[^:]*[[:alnum:]][^:]*:[^:]*[[:alnum:]][^:]*$'
+	REGEX_SUBTASK_ESTIMATE_STATUS='^[[:alnum:][:space:]]*[[:alpha:]]\{1,\}[[:alnum:][:space:]]*$'
+	REGEX_SUBTASK_ESTIMATE_SINGLE='^[[:space:]]*[[:digit:]]\{1,\}[[:space:]]*$'
+	REGEX_SUBTASK_ESTIMATE_MINMAX='^[[:space:]]*[[:digit:]]\{1,\}[[:space:]]*-[[:space:]]*[[:digit:]]\{1,\}[[:space:]]*$'
+
+	input_get_tasks () {(
+		INPUT="${1:?}"
+		FILTER="${2:-}"
+		TASKS="$(
+			if test "${FILTER}"; then
+				filter () {(
+					sed -n "$(
+						for LINE_NUMBER in $(echo "${FILTER}" | tr ',' ' '); do
+							printf "%s" "${LINE_NUMBER}p;"
+						done
+					)"
+				)}
+			else
+				filter () {(
+					cat
+				)}
+			fi
+			printf "%s\\n" "${INPUT:?}" \
+			| grep -e "${REGEX_TASK:?}" \
+			| filter \
+			| cut -d ':' -f '1' \
+			| unpad
+		)"
+		if test "${TASKS}"; then
+			printf "%s" "${TASKS}"
+			exit 0
+		else
+			exit 1
+		fi
+	)}
+	input_task_get_subtasks () {(
+		INPUT="${1:?}"
+		TASK="${2:?}"
+		SUBTASKS="$(
+			TASK="$(
+				printf "%s\\n" "${INPUT:?}" \
+				| grep -e "${REGEX_TASK:?}" \
+				| grep -e "${TASK:?}" \
+				| sed 's:/:\\\/:g' # Escape slashes.
+			)"
+			printf "%s\\n" "${INPUT:?}" \
+			| sed -n "/${TASK:?}/,/${REGEX_TASK:?}/p" \
+			| grep -ve "${REGEX_TASK:?}" \
+			| grep -e "${REGEX_SUBTASK:?}" \
+			| unpad
+		)"
+		if test "${SUBTASKS}"; then
+			printf "%s" "${SUBTASKS}"
+			exit 0
+		else
+			exit 1
+		fi
+	)}
+	subtask_get_estimate_max () {(
+		SUBTASK="${1:?}"
+		ESTIMATE_MAX="$(
+			subtask_get_estimate_range "${SUBTASK:?}"  \
+			| cut -f '2'
+		)"
+		if test "${ESTIMATE_MAX}"; then
+			printf "%s" "${ESTIMATE_MAX}"
+			exit 0
+		else
+			exit 1
+		fi
+	)}
+	subtask_get_estimate_min () {(
+		SUBTASK="${1:?}"
+		ESTIMATE_MIN="$(
+			subtask_get_estimate_range "${SUBTASK:?}"  \
+			| cut -f '1'
+		)"
+		if test "${ESTIMATE_MIN}"; then
+			printf "%s" "${ESTIMATE_MIN}"
+			exit 0
+		else
+			exit 1
+		fi
+	)}
+	subtask_get_estimate_range () {(
+		SUBTASK="${1:?}"
+		ESTIMATE="$(
+			printf "%s" "${SUBTASK:?}" \
+			| cut -d ':' -f '2-' \
+			| unpad
+		)"
+		ESTIMATE_RANGE="$(
+			if printf "%s" "${ESTIMATE}" | grep -qe "${REGEX_SUBTASK_ESTIMATE_SINGLE:?}"; then
+				printf "%s\\t%s" "${ESTIMATE}" "${ESTIMATE}"
+			elif printf "%s" "${ESTIMATE}" | grep -qe "${REGEX_SUBTASK_ESTIMATE_MINMAX:?}"; then
+				ESTIMATE_MIN="$(
+					printf "%s" "${ESTIMATE}" \
+					| tr -d '[:space:]' \
+					| cut -d '-' -f '1'
+				)"
+				ESTIMATE_MAX="$(
+					ESTIMATE_MAX="$(
+						printf "%s" "${ESTIMATE}" \
+						| tr -d '[:space:]' \
+						| cut -d '-' -f '2'
+					)"
+					if test "${ESTIMATE_MAX}" -gt "${ESTIMATE_MIN}"; then
+						echo "${ESTIMATE_MAX}"
+					else
+						echo "${ESTIMATE_MIN}"
+					fi
+				)"
+				printf "%s\\t%s" \
+					"${ESTIMATE_MIN}" \
+					"${ESTIMATE_MAX}"
+			fi
+		)"
+		if test "${ESTIMATE_RANGE}"; then
+			printf "%s" "${ESTIMATE_RANGE}"
+			exit 0
+		else
+			exit 1
+		fi
+	)}
+	subtask_get_estimate_status () {(
+		SUBTASK="${1:?}"
+		ESTIMATE_STATUS="$(
+			printf "%s" "${SUBTASK:?}" \
+			| cut -d ':' -f '2-' \
+			| grep -e "${REGEX_SUBTASK_ESTIMATE_STATUS:?}" \
+			| unpad
+		)"
+		if test "${ESTIMATE_STATUS}"; then
+			printf "%s" "${ESTIMATE_STATUS}"
+			exit 0
+		else
+			exit 1
+		fi
+	)}
+	subtask_get_name () {(
+		SUBTASK="${1:?}"
+		NAME="$(
+			printf "%s" "${SUBTASK:?}" \
+			| cut -d ':' -f '1' \
+			| unpad
+		)"
+		if test "${NAME}"; then
+			printf "%s" "${NAME}"
+			exit 0
+		else
+			exit 1
+		fi
+	)}
+	unpad () {(
+		sed \
+			-e 's/^[[:space:]]*//' \
+			-e 's/[[:space:]]*$//'
+	)}
+
+	# Filter input for comments.
+	INPUT="$(printf "%s" "${ARGS_INPUT:?}" | grep -ve '^[[:space:]]*#.*$')"
+
+	TASKS="$(input_get_tasks "${ARGS_INPUT:?}" "${ARGS_TASKS}")"
+
+	# Get max name length and total estimate time.
+	MAX_NAME_LENGTH="0"
+	TOTAL_ESTIMATE_TIME="0"
+	while read -r TASK; do
+		SUBTASKS="$(input_task_get_subtasks "${INPUT:?}" "${TASK}")"
+		while read -r SUBTASK; do
+			SUBTASK_NAME="$(subtask_get_name "${SUBTASK}")"
+			test "${#SUBTASK_NAME}" -gt "${MAX_NAME_LENGTH:-0}" \
+			&& MAX_NAME_LENGTH="${#SUBTASK_NAME}"
+			SUBTASK_ESTIMATE_MAX="$(subtask_get_estimate_max "${SUBTASK}")"
+			TOTAL_ESTIMATE_TIME="$(( TOTAL_ESTIMATE_TIME + "${SUBTASK_ESTIMATE_MAX:-0}" ))"
+		done <<- EOF
+			${SUBTASKS}
+			EOF
+	done <<- EOF
+		${TASKS}
+		EOF
+
+	render () {(
+		RULE_DAYS="$(
+			count="0"
+			days="0"
+			printf "%-${MAX_NAME_LENGTH:?}s %s\\n" "" "$(
+				while test "${count}" -le "${TOTAL_ESTIMATE_TIME}"; do
+					printf "%-${ARGS_HOURS_PER_DAY:?}s" "${days}d"
+					count="$(( count + ${ARGS_HOURS_PER_DAY:?} ))"
+					days="$(( days + 1 ))"
+				done
+			)"
+		)"
+		RULE_DECO="$(
+			printf "%-${MAX_NAME_LENGTH:?}s %s\\n" "" "$(
+				printf "%-${TOTAL_ESTIMATE_TIME}s" "" \
+				| sed -e "s/ /${GANTT_CHART_CHARACTER_TIMELINE}/g"
+			)"
+		)"
+		printf "%s\\n%s\\n\\n" "${RULE_DAYS}" "${RULE_DECO}"
+		characters_offset="0"
+		total_hours="0"
+		while read -r TASK; do
+			printf "\\e[1m\\e[4m%s\\e[0m\\n" "${TASK}"
+			SUBTASKS="$(input_task_get_subtasks "${INPUT:?}" "${TASK}")"
+			while read -r SUBTASK; do
+				SUBTASK_NAME="$(subtask_get_name "${SUBTASK}")"
+				SUBTASK_ESTIMATE_MIN="$(subtask_get_estimate_min "${SUBTASK}")"
+				SUBTASK_ESTIMATE_MAX="$(subtask_get_estimate_max "${SUBTASK}")"
+				SUBTASK_ESTIMATE_MIN_BAR="$(
+					printf "%-${SUBTASK_ESTIMATE_MIN}s" "" \
+					| sed -e "s/ /${GANTT_CHART_CHARACTER_MIN}/g"
+				)"
+				SUBTASK_ESTIMATE_MAX_BAR="$(
+					printf "%-$(( SUBTASK_ESTIMATE_MAX - SUBTASK_ESTIMATE_MIN ))s" "" \
+					| sed -e "s/ /${GANTT_CHART_CHARACTER_MAX}/g"
+				)"
+				SUBTASK_ESTIMATE_BAR="${SUBTASK_ESTIMATE_MIN_BAR:-}${SUBTASK_ESTIMATE_MAX_BAR:-}"
+				printf "%-${MAX_NAME_LENGTH:?}s %-${characters_offset}s%s %s\\n" \
+					"${SUBTASK_NAME}" \
+					"" \
+					"${SUBTASK_ESTIMATE_BAR:-"$(subtask_get_estimate_status "${SUBTASK}")"}" \
+					"$(
+						if test "${SUBTASK_ESTIMATE_MAX}" = "${SUBTASK_ESTIMATE_MIN}"; then
+							printf "%s" "${SUBTASK_ESTIMATE_MAX}"
+						else
+							printf "%s-%s" "${SUBTASK_ESTIMATE_MIN}" "${SUBTASK_ESTIMATE_MAX}"
+						fi
+					)"
+				characters_offset="$(( characters_offset + ${#SUBTASK_ESTIMATE_BAR} ))"
+				total_hours="$(( total_hours + "${SUBTASK_ESTIMATE_MAX:-0}" ))"
+			done <<- EOF
+				${SUBTASKS}
+				EOF
+		done <<- EOF
+			${TASKS}
+			EOF
+		printf "\\n%s\\n%s\\n" "${RULE_DECO}" "${RULE_DAYS}"
+	)}
+	render
+
+)}
+main
